@@ -8,6 +8,20 @@ export function isChartLayout(v: unknown): v is ChartLayout {
   return typeof v === 'string' && CHART_LAYOUTS.indexOf(v as ChartLayout) !== -1;
 }
 
+// Where the user left the pan/zoom camera in a tree layout. The view is anchored
+// to the card nearest the viewport center (not to raw coordinates), so it still
+// lands in the right place when the tree is a little different next time.
+export interface IChartCamera {
+  auto: boolean;            // the user never moved the view — fit it as usual
+  focus: string | null;     // the focus (re-rooted person) the camera belongs to
+  zoom: number;
+  id: string;               // data-soc-id of the anchor card
+  dx: number;               // anchor card center minus viewport center, in screen px
+  dy: number;
+}
+
+export type ChartCameras = { vertical?: IChartCamera; horizontal?: IChartCamera };
+
 export interface IChartStoredState {
   chartLayout?: ChartLayout;
   showStats?: boolean;
@@ -16,6 +30,7 @@ export interface IChartStoredState {
   filterDisabled?: boolean;
   filterDepartments?: string[];
   focusEmail?: string | null;
+  cameras?: ChartCameras;
 }
 
 const LS_CHART_KEY = 'smartOrgChart_chartState';
@@ -42,7 +57,31 @@ function sanitizeStoredState(raw: unknown): IChartStoredState {
       .filter((d): d is string => typeof d === 'string' && d.length > 0);
   }
   if (typeof r.focusEmail === 'string' && r.focusEmail) out.focusEmail = r.focusEmail;
+  if (r.cameras && typeof r.cameras === 'object' && !Array.isArray(r.cameras)) {
+    const c = r.cameras as { [key: string]: unknown };
+    const cameras: ChartCameras = {};
+    const vertical = sanitizeCamera(c.vertical);
+    const horizontal = sanitizeCamera(c.horizontal);
+    if (vertical) cameras.vertical = vertical;
+    if (horizontal) cameras.horizontal = horizontal;
+    out.cameras = cameras;
+  }
   return out;
+}
+
+function sanitizeCamera(raw: unknown): IChartCamera | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const r = raw as { [key: string]: unknown };
+  const num = (v: unknown): v is number => typeof v === 'number' && isFinite(v);
+  if (!num(r.zoom) || r.zoom <= 0 || r.zoom > 10) return undefined;
+  if (typeof r.auto !== 'boolean') return undefined;
+  if (!r.auto && (typeof r.id !== 'string' || !r.id || !num(r.dx) || !num(r.dy))) return undefined;
+  return {
+    auto: r.auto, zoom: r.zoom,
+    focus: typeof r.focus === 'string' && r.focus ? r.focus : null,
+    id: typeof r.id === 'string' ? r.id : '',
+    dx: num(r.dx) ? r.dx : 0, dy: num(r.dy) ? r.dy : 0,
+  };
 }
 
 function parseStored(s: string | null): IChartStoredState | null {

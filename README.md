@@ -37,7 +37,7 @@ A SharePoint Framework web part that gives any SharePoint Online page a searchab
 | **Department filter** | Narrow the chart to one or more departments |
 | **User type filter** | Show or hide members and guest users independently |
 | **Statistics panel** | Headcount, members, guests, and departments overlaid on the chart |
-| **Zoom** | 25%–150% with auto-fit on initial load |
+| **Map-like navigation** | Drag to pan and mouse-wheel zoom around the pointer on the tree layouts; zoom 1%–150% (type any percentage), **Fit entire chart**. Opens fitted, or — for a large organization — at a readable 60% looking at the root instead of an unreadable overview; each layout remembers where you left it. On touch devices, **Explore chart** mode adds one-finger pan and pinch zoom without trapping page scrolling. Cards render once, so large organizations stay responsive |
 | **Export to PDF** | PDF button in the toolbar downloads the currently visible chart |
 | **Export to CSV** | CSV button in the toolbar downloads the currently visible chart data |
 
@@ -49,6 +49,7 @@ A SharePoint Framework web part that gives any SharePoint Online page a searchab
 | **Presence badges** | Live availability from Microsoft Teams, refreshed every 60 seconds |
 | **Person profile card** | Full card with manager chain, dotted-line relationships, custom attributes, headcount, and action buttons (Chat, Email, Focus) |
 | **Custom Attributes** | Admin-configured Entra ID fields (Employee ID, Cost Center, etc. — up to 10) shown on Directory cards/columns and the profile card |
+| **External People** | Contractors, partners, and vacancies who are not in Microsoft 365, added inline or read from a CSV file, placed under their manager (directory user or another external person) |
 
 ### Admin & Personalization
 
@@ -156,6 +157,16 @@ Cleans prior artifacts, bundles in production mode, and produces `sharepoint/sol
 3. Check **Make this solution available to all sites**, then click **Deploy**.
 4. Approve Graph permissions under **Advanced** → **API access** (see [Graph API Permissions](#graph-api-permissions)).
 
+### Automated tests
+
+Two Puppeteer suites drive the standalone demo harness (no SharePoint needed) and require Google Chrome (set `CHROME_PATH` if it is not at the default Windows location). A third is a plain Node unit test of the CSV reader. `npm test` runs all three.
+
+```bash
+npm run test:navigation       # map-like pan/zoom on 150/500/1,000-person trees, touch, property pane
+npm run test:external-people  # CSV + inline External People, collapsed rows, external managers, warnings
+npm run test:external-csv     # CSV reader: parsing, delimiters, encodings, URLs, errors
+```
+
 ---
 
 ## Configuration
@@ -199,6 +210,28 @@ All settings below are configured in the web part property pane (edit the page �
 
 Surface up to 10 additional Entra ID fields on Directory cards/columns and the Org Chart profile card — e.g. `employeeId`, `companyName`, `city`, or an on-premises AD extension attribute (`extensionAttribute1`–`extensionAttribute15`) for things like cost center or building. Each entry has a display label and independent "Show in Directory" / "Show in Org Chart" toggles. Requires the Graph API or Auto data source.
 
+### External People
+
+Show people who are not in the Microsoft 365 directory — contractors, partners, vacancies — on the org chart. They also appear in the Employee Directory, search, headcounts, and exports, with an optional **External** badge (toggle: **Show "External" badge**, on by default). External people have no photo or presence.
+
+There are two sources, and you can use either or both:
+
+- **A CSV file** (best for more than a few people, or when you already keep them in a spreadsheet). Save a `.csv` file in a document library **on the same site collection** as the page and paste its link into **People CSV file** in the **External People** group. The first row must be a header row with these columns (matched case-insensitively):
+
+  | Column | Required | Purpose | Also accepted as |
+  |---|---|---|---|
+  | `Name` | Yes | The person's name (rows with no name are skipped) | `Title`, `Full Name`, `Display Name` |
+  | `JobTitle` | No | Job title | `Job Title`, `Position`, `Role` |
+  | `Email` | No | Their own email — lets other external people report to them | `Mail`, `Email Address` |
+  | `ManagerEmail` | Yes | Email or UPN of who they report to | `Manager Email`, `Manager`, `Reports To` |
+
+  In Excel use **File → Save As → CSV UTF-8**. Comma-, semicolon-, and tab-separated files all work, and legacy "CSV" files with accented characters are read correctly. Up to 5,000 rows are read. The file is read with the viewer's own permissions, so everyone who views the page needs read access to it; no extra API permissions are required. Changes show up after **Refresh data** (or the next page load).
+- **The inline editor** (**+ Add person**) in the same property pane group, for a handful of people — name, job title, optional email, and manager email. Each saved person collapses to just their name (a ⚠ appears next to it if something needs attention); click the name to open the fields again.
+
+With **Use Demo Data** on, the file is still read, but the chart shows the demo people, so `ManagerEmail` values must match demo emails (e.g. `a.chen@contoso.com`) to be placed.
+
+Each person is placed under whoever has the **manager email** — a directory user, or another external person by their **Email**. If that manager is hidden by a User Filter, they move up to the next visible manager, just like a directory user. If no one has the manager email, the pane shows a warning, and the person stays in the Directory but is not placed in the chart until the email is fixed.
+
 ### User Filters
 
 | Setting | Default | Description |
@@ -217,7 +250,7 @@ Surface up to 10 additional Entra ID fields on Directory cards/columns and the O
 | **Top-Level User** | _(required)_ | UPN or email of the root person (e.g. `ceo@company.com`) |
 | **Levels to load below root** | 3 | How many hierarchy levels to fetch on initial load (1–8) |
 | **Dotted-line manager attribute** | _(empty)_ | Optional on-premises AD extension attribute (`extensionAttribute1`–`15`) holding a secondary "dotted line" manager's email/UPN; shown on the profile card. Requires Graph API. |
-| **Default Org Chart Zoom** | Auto-fit | Starting zoom: Auto-fit, 50%, 75%, 100%, 125%, or 150% |
+| **Default Org Chart Zoom** | Auto-fit | Starting zoom: Auto-fit, or any whole percentage from 1% to 100% |
 
 ### Org Chart Features
 
@@ -305,6 +338,7 @@ SharePointSmartOrgChart/
 │   ├── services/
 │   │   ├── GraphService.ts          # Microsoft Graph calls, photo caching, org tree builder,
 │   │   │                            #   headcount, custom attributes
+│   │   ├── ExternalPeopleCsvService.ts # Reads External People from a CSV file
 │   │   ├── MockGraphService.ts      # Demo data service
 │   │   ├── PdfExportService.ts      # PDF and CSV export
 │   │   ├── persistentCache.ts       # IndexedDB-backed local cache for user/org data
@@ -320,8 +354,10 @@ SharePointSmartOrgChart/
 │           ├── EmployeeDirectory/   # Directory view (grid, list, filters, export)
 │           ├── OrgChart/            # Chart view (all three layouts), split into focused
 │           │                        #   modules: OrgTree, OrgNodeCard, PersonCard, DrillView,
-│           │                        #   OrgChartToolbar, orgTreeUtils, orgTheme, chartPersistence
+│           │                        #   OrgChartToolbar, TreeCanvas (pan/zoom camera), orgTreeUtils,
+│           │                        #   orgTheme, chartPersistence
 │           └── SettingsPanel/       # User preferences panel
+├── tests/                           # Puppeteer tests against the demo harness
 ├── USER-GUIDE.md                    # End-user documentation
 ├── CHANGELOG.md                     # Version history
 └── LICENSE
@@ -369,6 +405,7 @@ SharePointSmartOrgChart/
 - User preferences (card size, font scale, etc.) are stored in browser `localStorage` and are not roamed across devices or browsers.
 - User/org data is cached locally (in-memory and in the browser's IndexedDB) for up to 4 hours; use the **Refresh data** header button to force an immediate reload.
 - Custom Attributes require the Graph API data source — SharePoint Search has no generic way to read Entra ID attributes.
+- External People have no photo or presence, and are matched to managers by email only (never by name). The CSV file must be in a document library on the same site collection as the page and have the header row described under [External People](#external-people).
 - Node.js 18 LTS is required to build from source. SPFx 1.18 is not compatible with Node 20+.
 - Arabic and Hebrew interface text is fully translated, but the layout itself does not yet mirror right-to-left.
 

@@ -7,6 +7,7 @@ declare interface ISmartOrgChartWebPartStrings {
   PropertyPane_Group_DataSource: string;
   PropertyPane_Group_CustomAttributes: string;
   PropertyPane_Group_UserFilters: string;
+  PropertyPane_Group_ExternalPeople: string;
   PropertyPane_Group_OrgChart: string;
   PropertyPane_Group_OrgChartFeatures: string;
   PropertyPane_Group_Directory: string;
@@ -82,6 +83,35 @@ declare interface ISmartOrgChartWebPartStrings {
   PropertyPane_CustomAttributes_ShowInDirectory: string;
   PropertyPane_CustomAttributes_ShowInOrgChart: string;
 
+  // ── Property pane: External People ──
+  PropertyPane_ExternalPeople_Note: string;
+  PropertyPane_ExternalPeople_Heading: string;
+  PropertyPane_ExternalPeople_Empty: string;
+  PropertyPane_ExternalPeople_AddButton: string;
+  PropertyPane_ExternalPeople_NameLabel: string;
+  PropertyPane_ExternalPeople_NamePlaceholder: string;
+  PropertyPane_ExternalPeople_TitleLabel: string;
+  PropertyPane_ExternalPeople_TitlePlaceholder: string;
+  PropertyPane_ExternalPeople_EmailLabel: string;
+  PropertyPane_ExternalPeople_EmailPlaceholder: string;
+  PropertyPane_ExternalPeople_ManagerLabel: string;
+  PropertyPane_ExternalPeople_ManagerPlaceholder: string;
+  PropertyPane_ExternalPeople_ManagerError: string;
+  PropertyPane_ExternalPeople_ManagerNotFound: string;
+  PropertyPane_ExternalPeople_RemoveTitle: string;
+  PropertyPane_ExternalPeople_RemoveAriaLabel: string;
+  PropertyPane_ExternalPeople_ShowBadge_Label: string;
+  PropertyPane_ExternalPeople_CsvLabel: string;
+  PropertyPane_ExternalPeople_CsvPlaceholder: string;
+  PropertyPane_ExternalPeople_CsvHelp: string;
+  PropertyPane_ExternalPeople_CsvCount: string;
+  PropertyPane_ExternalPeople_CsvMissingColumns: string;
+  PropertyPane_ExternalPeople_CsvError: string;
+  PropertyPane_ExternalPeople_UnresolvedCsv: string;
+  PropertyPane_ExternalPeople_PeopleCount: string;
+  PropertyPane_ExternalPeople_ToggleRow: string;
+  PropertyPane_ExternalPeople_Unnamed: string;
+
   // ── Property pane: User Filters ──
   PropertyPane_ExcludedAccounts_Label: string;
   PropertyPane_ExcludedAccounts_Placeholder: string;
@@ -113,11 +143,6 @@ declare interface ISmartOrgChartWebPartStrings {
   PropertyPane_DottedLine_Description: string;
   PropertyPane_DefaultZoom_Label: string;
   PropertyPane_Zoom_Auto: string;
-  PropertyPane_Zoom_50: string;
-  PropertyPane_Zoom_75: string;
-  PropertyPane_Zoom_100: string;
-  PropertyPane_Zoom_125: string;
-  PropertyPane_Zoom_150: string;
 
   // ── Property pane: Org Chart Features ──
   PropertyPane_FeatureToggles_Note: string;
@@ -170,6 +195,7 @@ declare interface ISmartOrgChartWebPartStrings {
   Directory_AllOffices: string;
   Directory_StatusDisabled: string;
   Directory_StatusGuest: string;
+  Directory_StatusExternal: string;
   Directory_PresenceStatus: string;
   Directory_ChatInTeams: string;
   Directory_ChatWithInTeams: string;
@@ -243,6 +269,11 @@ declare interface ISmartOrgChartWebPartStrings {
   Chart_ZoomOutTitle: string;
   Chart_ZoomInTitle: string;
   Chart_ZoomResetTitle: string;
+  Chart_ZoomPercent: string;
+  Chart_ZoomFit: string;
+  Chart_CanvasActivate: string;
+  Chart_CanvasDone: string;
+  Chart_CanvasHint: string;
   Chart_ShowInChartAria: string;
   Chart_ShowInChartTitle: string;
   Chart_FilterMembers: string;
@@ -281,6 +312,7 @@ declare interface ISmartOrgChartWebPartStrings {
   PersonCard_CloseAria: string;
   PersonCard_StatusDisabled: string;
   PersonCard_StatusGuest: string;
+  PersonCard_StatusExternal: string;
   PersonCard_DirectReportSingular: string;
   PersonCard_DirectReportPlural: string;
   PersonCard_TotalSuffix: string;
@@ -305,6 +337,7 @@ declare interface ISmartOrgChartWebPartStrings {
   OrgNode_DirectReportsSuffix: string;
   OrgNode_StatusDisabled: string;
   OrgNode_StatusGuest: string;
+  OrgNode_StatusExternal: string;
   OrgNode_TotalReportsAcrossLevels: string;
 
   // ── Drill view ──

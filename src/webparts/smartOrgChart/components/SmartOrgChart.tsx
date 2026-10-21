@@ -2,13 +2,17 @@ import * as React from 'react';
 import { IconButton } from '@fluentui/react/lib/Button';
 import { Icon } from '@fluentui/react/lib/Icon';
 import { MSGraphClientV3 } from '@microsoft/sp-http';
-import { GraphService, ICustomAttributeConfig, IUserFilterOptions } from '../../../services/GraphService';
-import { MockGraphService, MockCompanySize } from '../../../services/MockGraphService';
+import { GraphService, ICustomAttributeConfig, IExternalPersonConfig, IUserFilterOptions } from '../../../services/GraphService';
+import { MockGraphService, MockCompanySize, DEMO_EXTERNAL_CSV_URL, DEMO_EXTERNAL_CSV_TEXT } from '../../../services/MockGraphService';
+import {
+  IExternalCsvResult, loadExternalPeopleFromCsv, parseExternalPeopleCsv, toServerRelativePath,
+} from '../../../services/ExternalPeopleCsvService';
 import { ISmartOrgChartProps, IUserSettings } from './ISmartOrgChartProps';
 import { EmployeeDirectory } from './EmployeeDirectory/EmployeeDirectory';
 import { OrgChart } from './OrgChart/OrgChart';
 import { SettingsPanel } from './SettingsPanel/SettingsPanel';
 import { getAccentCssVars } from './colorUtils';
+import { ExternalBadgeContext } from './personUtils';
 import { formatString, getEffectiveLocale } from './localeUtils';
 import * as strings from 'SmartOrgChartWebPartStrings';
 import styles from './SmartOrgChart.module.scss';
@@ -128,6 +132,11 @@ function readMockSize(instanceId: string): MockCompanySize {
   return 150;
 }
 
+// The local workbench / demo harness has no SharePoint to read files from
+function isLocalHost(): boolean {
+  return window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+}
+
 function readCurrentView(fallback: 'directory' | 'orgchart', instanceId: string): 'directory' | 'orgchart' {
   const v = lsGet(LS_VIEW_KEY, instanceId);
   if (v === 'directory' || v === 'orgchart') return v;
@@ -151,6 +160,9 @@ export class SmartOrgChart extends React.Component<ISmartOrgChartProps, ISmartOr
   // bails out when its request number is no longer current
   private _initRequest = 0;
   private _fontScaleOverridden: boolean;
+  // External people read from the CSV file (merged with the inline ones)
+  private _csv: IExternalCsvResult = { people: [], missingColumns: [] };
+  private _reportSeq = 0;
 
   constructor(props: ISmartOrgChartProps) {
     super(props);
@@ -201,15 +213,70 @@ export class SmartOrgChart extends React.Component<ISmartOrgChartProps, ISmartOr
     // configured changes what GraphService fetches ($select), so it needs a
     // fresh service; unlike the filters above, updateFilterOptions can't apply it.
     const customFieldsChanged = this._customFieldsKey(prev.customAttributes) !== this._customFieldsKey(this.props.customAttributes);
+    const externalPeopleChanged = this._externalPeopleKey(prev.externalPeople) !== this._externalPeopleKey(this.props.externalPeople);
+    const externalCsvChanged = (prev.externalPeopleCsvUrl || '').trim() !== (this.props.externalPeopleCsvUrl || '').trim();
 
     if (serviceChanged || customFieldsChanged) {
       await this._initGraphService();
-    } else if (filtersChanged && this.state.graphService) {
-      // Re-filter the already-downloaded data in memory — no tenant re-download.
+    } else if ((filtersChanged || externalPeopleChanged || externalCsvChanged) && this.state.graphService) {
+      // Re-derive from the already-downloaded data in memory — no tenant re-download.
       // Bumping serviceGen remounts the views so they read the new result.
-      this.state.graphService.updateFilterOptions(this._buildFilterOptions(this._getTenantDomain()));
+      const service = this.state.graphService;
+      if (filtersChanged) service.updateFilterOptions(this._buildFilterOptions(this._getTenantDomain()));
+      if (externalCsvChanged) await this._loadExternalCsv();
+      if (!this._mounted || service !== this.state.graphService) return;
+      if (externalPeopleChanged || externalCsvChanged) this._applyExternalPeople(service);
       this.setState(s => ({ serviceGen: s.serviceGen + 1 }));
     }
+  }
+
+  // Only the fields that affect the tree — edits to a row that are still
+  // incomplete (no name yet) change the key too, which is harmless.
+  private _externalPeopleKey(people: IExternalPersonConfig[] | undefined): string {
+    return JSON.stringify((people || []).map(p => [p.id, p.name, p.jobTitle, p.email || '', p.managerEmail]));
+  }
+
+  // Reads the configured CSV file (or the demo stand-in). Never throws; a
+  // failure leaves the file's people empty and is reported to the property pane.
+  private async _loadExternalCsv(): Promise<void> {
+    const fileUrl = (this.props.externalPeopleCsvUrl || '').trim();
+    if (!fileUrl) {
+      this._csv = { people: [], missingColumns: [] };
+    } else if (fileUrl === DEMO_EXTERNAL_CSV_URL || isLocalHost()) {
+      // Demo stand-in. Anywhere else — including a real site with Use Demo Data on — the file is
+      // read for real; its manager emails then need to match the (demo) people to be placed.
+      const webUrl = this.props.context?.pageContext?.web?.absoluteUrl || '';
+      this._csv = fileUrl === DEMO_EXTERNAL_CSV_URL
+        ? parseExternalPeopleCsv(DEMO_EXTERNAL_CSV_TEXT)
+        : { people: [], missingColumns: [], error: toServerRelativePath(fileUrl, webUrl) ? 'notFound' : 'invalidUrl', detail: 'local workbench: only the demo file is available' };
+    } else {
+      const { spHttpClient, pageContext } = this.props.context;
+      this._csv = await loadExternalPeopleFromCsv(spHttpClient, pageContext.web.absoluteUrl, fileUrl);
+    }
+  }
+
+  // Hands the service inline + CSV people, then tells the property pane how they resolved
+  private _applyExternalPeople(service: GraphService): void {
+    service.updateExternalPeople((this.props.externalPeople || []).concat(this._csv.people));
+    this._reportExternalPeople(service);
+  }
+
+  private _reportExternalPeople(service: GraphService): void {
+    const report = this.props.onExternalPeopleStatus;
+    if (!report) return;
+    const seq = ++this._reportSeq;
+    const emit = (): void => {
+      if (!this._mounted || seq !== this._reportSeq) return;
+      report({
+        csvError: this._csv.error,
+        csvDetail: this._csv.detail,
+        csvCount: this._csv.people.length,
+        missingColumns: this._csv.missingColumns,
+        unresolved: service.getExternalPeopleStatus().unresolved,
+      });
+    };
+    // Resolution happens when the directory has loaded; the load is shared with the views
+    service.getAllUsers().then(emit, emit);
   }
 
   private _isDemoMode(): boolean {
@@ -249,10 +316,14 @@ export class SmartOrgChart extends React.Component<ISmartOrgChartProps, ISmartOr
 
   private async _initGraphService(): Promise<void> {
     const request = ++this._initRequest;
+    // Read the CSV file while the Graph client is being acquired
+    const csvLoaded = this._loadExternalCsv();
     if (this._isDemoMode()) {
+      await csvLoaded;
+      if (!this._mounted || request !== this._initRequest) return;
       const filterOptions = this._buildFilterOptions(this._getTenantDomain());
       this.setState(prev => ({
-        graphService: new MockGraphService(prev.mockSize, filterOptions) as unknown as GraphService,
+        graphService: this._withExternalPeople(new MockGraphService(prev.mockSize, filterOptions)),
         serviceGen: prev.serviceGen + 1,
       }));
       return;
@@ -264,6 +335,7 @@ export class SmartOrgChart extends React.Component<ISmartOrgChartProps, ISmartOr
     } catch {
       // Graph client unavailable — fall back to SP Search only
     }
+    await csvLoaded;
     // A newer init (or an unmount) happened while awaiting the client
     if (!this._mounted || request !== this._initRequest) return;
 
@@ -278,7 +350,12 @@ export class SmartOrgChart extends React.Component<ISmartOrgChartProps, ISmartOr
       this.props.dottedLineAttribute || '',
       (this.props.customAttributes || []).map(c => c.graphField)
     );
-    this.setState(prev => ({ graphService: service, serviceGen: prev.serviceGen + 1 }));
+    this.setState(prev => ({ graphService: this._withExternalPeople(service), serviceGen: prev.serviceGen + 1 }));
+  }
+
+  private _withExternalPeople(service: GraphService): GraphService {
+    this._applyExternalPeople(service);
+    return service;
   }
 
   private _setMockSize = (size: MockCompanySize): void => {
@@ -286,7 +363,7 @@ export class SmartOrgChart extends React.Component<ISmartOrgChartProps, ISmartOr
     this._initRequest++;
     this.setState(prev => ({
       mockSize: size,
-      graphService: new MockGraphService(size, this._buildFilterOptions()) as unknown as GraphService,
+      graphService: this._withExternalPeople(new MockGraphService(size, this._buildFilterOptions())),
       serviceGen: prev.serviceGen + 1,
     }));
   }
@@ -315,6 +392,8 @@ export class SmartOrgChart extends React.Component<ISmartOrgChartProps, ISmartOr
     this.setState({ isRefreshing: true });
     try {
       await service.refresh();
+      await this._loadExternalCsv();
+      this._applyExternalPeople(service);
     } catch {
       // ignore — the views surface any load error when they remount
     }
@@ -416,6 +495,7 @@ export class SmartOrgChart extends React.Component<ISmartOrgChartProps, ISmartOr
           </div>
         </div>
 
+        <ExternalBadgeContext.Provider value={this.props.showExternalBadge !== false}>
         <div className={styles.content}>
           {currentView === 'directory' && graphService && (
             <EmployeeDirectory
@@ -461,6 +541,7 @@ export class SmartOrgChart extends React.Component<ISmartOrgChartProps, ISmartOr
             />
           )}
         </div>
+        </ExternalBadgeContext.Provider>
 
         <SettingsPanel
           isOpen={isSettingsOpen}

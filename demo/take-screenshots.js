@@ -76,19 +76,6 @@ async function clickAndWait(page, selector, ms = 600) {
   await wait(ms);
 }
 
-// The tree canvas centers the whole hierarchy horizontally, so a CEO-rooted
-// tree that's wider than the viewport scrolls the root out of view unless we
-// explicitly re-center on it (drill mode and narrower subtrees don't need this).
-async function centerTree(page) {
-  await page.evaluate(() => {
-    const el = document.querySelector('[class*="treeScroll"]');
-    if (!el) return;
-    el.scrollTop = 0;
-    el.scrollLeft = Math.max(0, (el.scrollWidth - el.clientWidth) / 2);
-  });
-  await wait(300);
-}
-
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 (async () => {
@@ -170,11 +157,9 @@ async function centerTree(page) {
     await screenshot(page, '07-orgchart-drill-breadcrumb.png');
 
     // ── 08 Org Chart vertical (Top Down) tree ────────────────────────────────
-    // Fixed zoom + centered scroll — auto-fit shrinks a CEO-rooted 150-person
-    // tree down to an unreadable 25%, and the canvas centers on the full
-    // hierarchy width, not the viewport, so the root scrolls out of view.
-    await goAndWait(page, '/?view=orgchart&layout=vertical&levels=3&zoom=0.65', 3000);
-    await centerTree(page);
+    // The default opening view: a tree too big to fit opens at a readable zoom,
+    // looking at its root, rather than shrinking to an unreadable overview.
+    await goAndWait(page, '/?view=orgchart&layout=vertical&levels=3', 3000);
     await screenshot(page, '08-orgchart-vertical.png');
     // Also the main "overview" hero shot — the tree reads better than the
     // plain directory grid (03-directory-overview.png already covers that).
@@ -293,8 +278,7 @@ async function centerTree(page) {
     await screenshot(page, '17-directory-list.png');
 
     // ── 18 Org Chart horizontal (Left to Right) tree ─────────────────────────
-    await goAndWait(page, '/?view=orgchart&layout=horizontal&levels=3&zoom=0.75', 3000);
-    await centerTree(page); // no-op for this layout (already left-anchored) but harmless
+    await goAndWait(page, '/?view=orgchart&layout=horizontal&levels=3', 3000);
     await screenshot(page, '18-orgchart-horizontal.png');
 
     console.log(`\nAll screenshots saved to ${SHOTS_DIR}`);

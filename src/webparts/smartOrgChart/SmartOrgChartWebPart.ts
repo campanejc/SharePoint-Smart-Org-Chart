@@ -18,7 +18,8 @@ import {
 import { SmartOrgChart } from './components/SmartOrgChart';
 import { ISmartOrgChartProps, OrgChartTheme } from './components/ISmartOrgChartProps';
 import { DEMO_CEO_EMAIL } from '../../services/MockGraphService';
-import { ICustomAttributeConfig, isValidCustomAttributeField } from '../../services/GraphService';
+import { ICustomAttributeConfig, IExternalPersonConfig, isValidCustomAttributeField } from '../../services/GraphService';
+import { IExternalPeopleReport, CSV_PERSON_ID_PREFIX } from '../../services/ExternalPeopleCsvService';
 import { DEFAULT_ACCENT, normalizeHex, hexToRgb, rgbToHex, contrastRatio, getContrastText, ensureReadable } from './components/colorUtils';
 import { formatString } from './components/localeUtils';
 import * as strings from 'SmartOrgChartWebPartStrings';
@@ -43,6 +44,9 @@ const PANE_STRUCTURE_PROPS = ['theme', 'useDemoData'];
 // Cap on admin-configured custom attributes — keeps the pane usable and bounds
 // the extra columns/fields the Directory and Org Chart would otherwise render.
 const MAX_CUSTOM_ATTRIBUTES = 10;
+
+// How long the CSV link field waits after the last keystroke before applying it
+const CSV_TYPING_PAUSE_MS = 700;
 
 export interface ISmartOrgChartWebPartProps {
   defaultView: 'directory' | 'orgchart';
@@ -73,6 +77,11 @@ export interface ISmartOrgChartWebPartProps {
   // Admin-configured Entra ID attributes to surface in the Directory / Org Chart.
   // Graph only — SharePoint Search has no generic way to read them.
   customAttributes: ICustomAttributeConfig[];
+  // People who are not in the Microsoft 365 directory (contractors, partners, vacancies):
+  // added inline here and/or read from a CSV file in a document library on the site
+  externalPeople: IExternalPersonConfig[];
+  externalPeopleCsvUrl: string;
+  showExternalBadge: boolean;
   // User filters
   excludedAccounts: string;
   restrictToTenantDomain: boolean;
@@ -88,6 +97,8 @@ export default class SmartOrgChartWebPart extends BaseClientSideWebPart<ISmartOr
   // Any future onThemeChanged override must also return early until this is set.
   private _isInitialized = false;
   private _customFields: WeakMap<HTMLElement, ICustomFieldHandle> = new WeakMap();
+  // How external people resolved in the chart; shown in the property pane
+  private _externalReport: IExternalPeopleReport | undefined;
 
   protected async onInit(): Promise<void> {
     const p = this.properties;
@@ -112,6 +123,9 @@ export default class SmartOrgChartWebPart extends BaseClientSideWebPart<ISmartOr
     if (p.dataSource  === undefined) p.dataSource  = 'auto';
     if (p.dottedLineAttribute === undefined) p.dottedLineAttribute = '';
     if (p.customAttributes    === undefined) p.customAttributes    = [];
+    if (p.externalPeople      === undefined) p.externalPeople      = [];
+    if (p.externalPeopleCsvUrl === undefined) p.externalPeopleCsvUrl = '';
+    if (p.showExternalBadge   === undefined) p.showExternalBadge   = true;
     // User filter defaults
     if (p.excludedAccounts       === undefined) p.excludedAccounts       = '';
     if (p.restrictToTenantDomain === undefined) p.restrictToTenantDomain = false;
@@ -165,6 +179,10 @@ export default class SmartOrgChartWebPart extends BaseClientSideWebPart<ISmartOr
       dataSource: this.properties.dataSource || 'auto',
       dottedLineAttribute: this.properties.dottedLineAttribute || '',
       customAttributes: this.properties.customAttributes || [],
+      externalPeople: this.properties.externalPeople || [],
+      externalPeopleCsvUrl: this.properties.externalPeopleCsvUrl || '',
+      showExternalBadge: this.properties.showExternalBadge !== false,
+      onExternalPeopleStatus: this._onExternalPeopleStatus,
       excludedAccounts:       this.properties.excludedAccounts       || '',
       restrictToTenantDomain: this.properties.restrictToTenantDomain || false,
       hideGuestUsers:         this.properties.hideGuestUsers         ?? true,
@@ -175,6 +193,13 @@ export default class SmartOrgChartWebPart extends BaseClientSideWebPart<ISmartOr
 
     ReactDom.render(element, this.domElement);
   }
+
+  // The chart reports how external people resolved (CSV file problems, unmatched managers);
+  // re-render the pane's fields so they show it.
+  private _onExternalPeopleStatus = (report: IExternalPeopleReport): void => {
+    this._externalReport = report;
+    if (this.context.propertyPane.isPropertyPaneOpen()) this.context.propertyPane.refresh();
+  };
 
   protected onDispose(): void {
     ReactDom.unmountComponentAtNode(this.domElement);
@@ -200,6 +225,48 @@ export default class SmartOrgChartWebPart extends BaseClientSideWebPart<ISmartOr
 
   private _fieldId(name: string): string {
     return `soc-${name}-${this.context.instanceId}`;
+  }
+
+  private _renderZoomField(elem: HTMLElement, changeCallback: ChangeCallback): void {
+    if (this._resyncCustomField(elem, changeCallback)) return;
+    const label = document.createElement('label');
+    label.textContent = `${strings.PropertyPane_DefaultZoom_Label} (%)`;
+    const input = document.createElement('input');
+    input.id = this._fieldId('defaultZoom');
+    label.htmlFor = input.id;
+    input.type = 'number';
+    input.min = '1'; input.max = '100'; input.step = '1';
+    input.style.cssText = 'display:block;width:100%;box-sizing:border-box;padding:6px;margin:6px 0 12px;';
+    const autoLabel = document.createElement('label');
+    const auto = document.createElement('input');
+    auto.type = 'checkbox';
+    autoLabel.appendChild(auto);
+    autoLabel.appendChild(document.createTextNode(strings.PropertyPane_Zoom_Auto));
+    const sync = (): void => {
+      auto.checked = !(this.properties.defaultZoom > 0);
+      input.disabled = auto.checked;
+      input.value = String(Math.round((this.properties.defaultZoom || 1) * 100));
+    };
+    const update = (value: number): void => {
+      const callback = this._customFields.get(elem)?.changeCallback;
+      if (callback) callback('defaultZoom', value);
+      sync();
+    };
+    const onInput = (): void => {
+      if (input.value && input.checkValidity()) update(Number(input.value) / 100);
+    };
+    const onAuto = (): void => { update(auto.checked ? 0 : 1); };
+    const onBlur = (): void => { sync(); };
+    input.addEventListener('input', onInput);
+    input.addEventListener('blur', onBlur);
+    auto.addEventListener('change', onAuto);
+    elem.appendChild(label); elem.appendChild(input); elem.appendChild(autoLabel);
+    this._customFields.set(elem, { changeCallback, sync, dispose: () => {
+      input.removeEventListener('input', onInput);
+      input.removeEventListener('blur', onBlur);
+      auto.removeEventListener('change', onAuto);
+    } });
+    sync();
   }
 
   private _renderAccentPicker(elem: HTMLElement, changeCallback: ChangeCallback): void {
@@ -754,6 +821,362 @@ export default class SmartOrgChartWebPart extends BaseClientSideWebPart<ISmartOr
     this._customFields.set(elem, handle);
   }
 
+  private _renderExternalCsvField(elem: HTMLElement, changeCallback: ChangeCallback): void {
+    if (this._resyncCustomField(elem, changeCallback)) return;
+    elem.innerHTML = '';
+
+    const label = document.createElement('label');
+    label.textContent = strings.PropertyPane_ExternalPeople_CsvLabel;
+    label.style.cssText = 'display:block;font-weight:600;font-size:14px;color:#323130;margin:4px 0 6px;';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.id = this._fieldId('external-csv');
+    input.spellcheck = false;
+    input.placeholder = strings.PropertyPane_ExternalPeople_CsvPlaceholder;
+    input.style.cssText = 'display:block;width:100%;box-sizing:border-box;padding:6px;border:1px solid #c8c6c4;border-radius:2px;font-size:13px;';
+    label.htmlFor = input.id;
+    const help = document.createElement('div');
+    help.textContent = strings.PropertyPane_ExternalPeople_CsvHelp;
+    help.style.cssText = 'font-size:12px;color:#605e5c;margin:6px 0;';
+    const status = document.createElement('div');
+    status.setAttribute('role', 'status');
+    status.style.cssText = 'font-size:12px;margin:0 0 12px;display:none;';
+    elem.appendChild(label); elem.appendChild(input); elem.appendChild(help); elem.appendChild(status);
+
+    const currentUrl = (): string => (this.properties.externalPeopleCsvUrl || '').trim();
+
+    const showStatus = (): void => {
+      const report = this._externalReport;
+      const lines: Array<{ text: string; error: boolean }> = [];
+      if (currentUrl() && report) {
+        if (report.csvError) {
+          lines.push({ text: strings.PropertyPane_ExternalPeople_CsvError + (report.csvDetail ? ` (${report.csvDetail})` : ''), error: true });
+        } else {
+          lines.push({ text: formatString(strings.PropertyPane_ExternalPeople_CsvCount, { count: report.csvCount }), error: false });
+          if (report.missingColumns.length > 0) {
+            lines.push({ text: formatString(strings.PropertyPane_ExternalPeople_CsvMissingColumns, { columns: report.missingColumns.join(', ') }), error: true });
+          }
+        }
+        const unplaced = report.unresolved.filter(u => u.id.indexOf(CSV_PERSON_ID_PREFIX) === 0).map(u => u.name);
+        if (unplaced.length > 0) {
+          lines.push({ text: formatString(strings.PropertyPane_ExternalPeople_UnresolvedCsv, { names: unplaced.join(', ') }), error: true });
+        }
+      }
+      status.innerHTML = '';
+      lines.forEach(l => {
+        const d = document.createElement('div');
+        d.textContent = l.text;
+        d.style.color = l.error ? '#a4262c' : '#605e5c';
+        status.appendChild(d);
+      });
+      status.style.display = lines.length > 0 ? 'block' : 'none';
+    };
+
+    let typingTimer = 0;
+    const handle: ICustomFieldHandle = {
+      changeCallback,
+      sync: () => {
+        if (document.activeElement !== input) input.value = this.properties.externalPeopleCsvUrl || '';
+        showStatus();
+      },
+      dispose: () => { window.clearTimeout(typingTimer); },
+    };
+
+    const commit = (): void => {
+      window.clearTimeout(typingTimer);
+      const value = input.value.trim();
+      if (value === currentUrl()) return;
+      if (handle.changeCallback) handle.changeCallback('externalPeopleCsvUrl', value);
+    };
+    // A pasted link applies after a short pause — no need to press Enter or click elsewhere
+    input.addEventListener('input', () => {
+      window.clearTimeout(typingTimer);
+      typingTimer = window.setTimeout(commit, CSV_TYPING_PAUSE_MS);
+    });
+    input.addEventListener('change', commit);
+    input.addEventListener('blur', commit);
+
+    input.value = this.properties.externalPeopleCsvUrl || '';
+    showStatus();
+    this._customFields.set(elem, handle);
+  }
+
+  private _renderExternalPeopleField(elem: HTMLElement, changeCallback: ChangeCallback): void {
+    if (this._resyncCustomField(elem, changeCallback)) return;
+    elem.innerHTML = '';
+
+    type TextKey = 'name' | 'jobTitle' | 'email' | 'managerEmail';
+    const TEXT_KEYS: TextKey[] = ['name', 'jobTitle', 'email', 'managerEmail'];
+    interface IRowRefs {
+      row: HTMLElement;
+      body: HTMLElement;
+      toggle: HTMLButtonElement;
+      chevron: HTMLSpanElement;
+      nameText: HTMLSpanElement;
+      flag: HTMLSpanElement;
+      inputs: { [K in TextKey]: HTMLInputElement };
+      errors: { [K in 'email' | 'managerEmail']: HTMLDivElement };
+      warning: HTMLDivElement;
+    }
+
+    const heading = document.createElement('div');
+    heading.textContent = strings.PropertyPane_ExternalPeople_Heading;
+    heading.style.cssText = 'display:block;font-weight:600;font-size:14px;color:#323130;margin-bottom:4px;margin-top:4px;';
+    elem.appendChild(heading);
+
+    const countLine = document.createElement('div');
+    countLine.style.cssText = 'font-size:12px;color:#605e5c;margin-bottom:8px;display:none;';
+    elem.appendChild(countLine);
+
+    const rowsContainer = document.createElement('div');
+    rowsContainer.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-bottom:8px;';
+    elem.appendChild(rowsContainer);
+
+    const emptyMsg = document.createElement('div');
+    emptyMsg.textContent = strings.PropertyPane_ExternalPeople_Empty;
+    emptyMsg.style.cssText = 'font-size:12px;color:#605e5c;font-style:italic;margin-bottom:8px;display:none;';
+    elem.appendChild(emptyMsg);
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.textContent = strings.PropertyPane_ExternalPeople_AddButton;
+    addBtn.style.cssText = 'padding:6px 14px;border:1px solid #c8c6c4;border-radius:2px;background:#fff;cursor:pointer;font-size:13px;color:#323130;';
+    elem.appendChild(addBtn);
+
+    const rowRefs: Map<string, IRowRefs> = new Map();
+    const getList = (): IExternalPersonConfig[] => (this.properties.externalPeople || []).slice();
+    const findIndex = (list: IExternalPersonConfig[], id: string): number => list.findIndex(c => c.id === id);
+    const looksLikeEmail = (v: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+    const isShown = (el: HTMLElement): boolean => el.style.display !== 'none' && el.textContent !== '';
+
+    const updateEmptyState = (): void => {
+      const count = rowsContainer.children.length;
+      emptyMsg.style.display = count === 0 ? 'block' : 'none';
+      countLine.style.display = count === 0 ? 'none' : 'block';
+      countLine.textContent = formatString(strings.PropertyPane_ExternalPeople_PeopleCount, { count });
+    };
+
+    // Collapsed rows show only the name, so a ⚠ in the header says "open me — something needs attention"
+    const updateFlag = (refs: IRowRefs): void => {
+      const problem = [refs.errors.email, refs.errors.managerEmail, refs.warning].filter(isShown)[0];
+      refs.flag.style.display = problem ? 'inline' : 'none';
+      refs.flag.title = problem ? problem.textContent || '' : '';
+    };
+
+    const setExpanded = (refs: IRowRefs, expanded: boolean): void => {
+      refs.body.style.display = expanded ? 'flex' : 'none';
+      refs.toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      refs.chevron.textContent = expanded ? '▾' : '▸';
+    };
+
+    const setName = (refs: IRowRefs, name: string): void => {
+      const text = name.trim() || strings.PropertyPane_ExternalPeople_Unnamed;
+      refs.nameText.textContent = text;
+      refs.toggle.setAttribute('aria-label', formatString(strings.PropertyPane_ExternalPeople_ToggleRow, { name: text }));
+    };
+
+    // Email fields are optional but must look like an email when filled in
+    const showValidity = (refs: IRowRefs, key: 'email' | 'managerEmail', value: string): void => {
+      const invalid = !!value && !looksLikeEmail(value);
+      const input = refs.inputs[key];
+      const error = refs.errors[key];
+      if (invalid) {
+        input.setAttribute('aria-invalid', 'true');
+        input.style.borderColor = '#a4262c';
+        error.textContent = strings.PropertyPane_ExternalPeople_ManagerError;
+        error.style.display = 'block';
+      } else {
+        input.removeAttribute('aria-invalid');
+        input.style.borderColor = '#c8c6c4';
+        error.textContent = '';
+        error.style.display = 'none';
+      }
+      updateFlag(refs);
+    };
+
+    // The chart found no one with this row's manager email
+    const showWarning = (refs: IRowRefs, id: string): void => {
+      const unresolved = !!this._externalReport && this._externalReport.unresolved.some(u => u.id === id);
+      refs.warning.textContent = unresolved ? strings.PropertyPane_ExternalPeople_ManagerNotFound : '';
+      refs.warning.style.display = unresolved ? 'block' : 'none';
+      updateFlag(refs);
+    };
+
+    const applyRowValues = (refs: IRowRefs, cfg: IExternalPersonConfig, skipFocused?: boolean): void => {
+      const active = document.activeElement;
+      TEXT_KEYS.forEach(key => {
+        if (skipFocused && active === refs.inputs[key]) return;
+        refs.inputs[key].value = cfg[key] || '';
+        if (key === 'name') setName(refs, refs.inputs.name.value);
+        if (key === 'email' || key === 'managerEmail') showValidity(refs, key, refs.inputs[key].value.trim());
+      });
+      showWarning(refs, cfg.id);
+    };
+
+    const handle: ICustomFieldHandle = {
+      changeCallback,
+      sync: () => {
+        const list = getList();
+        rowRefs.forEach((refs, id) => {
+          const cfg = list[findIndex(list, id)];
+          if (cfg) applyRowValues(refs, cfg, true);
+        });
+        updateEmptyState();
+      },
+      dispose: () => { /* no timers/rAF to clean up */ },
+    };
+
+    const commit = (list: IExternalPersonConfig[]): void => {
+      if (handle.changeCallback) handle.changeCallback('externalPeople', list);
+    };
+
+    const buildRow = (cfg: IExternalPersonConfig, ordinal: number): IRowRefs => {
+      const row = document.createElement('div');
+      row.style.cssText = 'border:1px solid #edebe9;border-radius:4px;padding:4px 8px;display:flex;flex-direction:column;gap:6px;';
+
+      // Header: always visible — expand/collapse toggle showing the name, ⚠ marker, remove button
+      const header = document.createElement('div');
+      header.style.cssText = 'display:flex;align-items:center;gap:6px;';
+      const bodyId = this._fieldId(`external-body-${cfg.id}`);
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.setAttribute('aria-controls', bodyId);
+      toggle.style.cssText = 'flex:1;min-width:0;display:flex;align-items:center;gap:6px;border:0;background:transparent;cursor:pointer;padding:4px 0;font-size:13px;color:#323130;text-align:left;';
+      const chevron = document.createElement('span');
+      chevron.setAttribute('aria-hidden', 'true');
+      chevron.style.cssText = 'width:10px;flex-shrink:0;';
+      const nameText = document.createElement('span');
+      nameText.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;';
+      const flag = document.createElement('span');
+      flag.textContent = '⚠';
+      flag.style.cssText = 'display:none;color:#8a5a00;flex-shrink:0;';
+      toggle.appendChild(chevron); toggle.appendChild(nameText); toggle.appendChild(flag);
+
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.textContent = '×';
+      removeBtn.title = strings.PropertyPane_ExternalPeople_RemoveTitle;
+      removeBtn.setAttribute('aria-label', formatString(strings.PropertyPane_ExternalPeople_RemoveAriaLabel, { ordinal: ordinal + 1 }));
+      removeBtn.style.cssText = 'flex-shrink:0;width:26px;height:26px;border:1px solid #c8c6c4;border-radius:2px;background:#fff;cursor:pointer;font-size:14px;line-height:1;color:#605e5c;';
+      header.appendChild(toggle); header.appendChild(removeBtn);
+      row.appendChild(header);
+
+      // Body: the fields, hidden while collapsed
+      const body = document.createElement('div');
+      body.id = bodyId;
+      body.style.cssText = 'display:none;flex-direction:column;gap:6px;padding-bottom:6px;';
+      row.appendChild(body);
+
+      const makeInput = (key: TextKey, labelText: string, placeholder: string): HTMLInputElement => {
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'flex:1;min-width:0;';
+        const input = document.createElement('input');
+        input.type = key === 'email' || key === 'managerEmail' ? 'email' : 'text';
+        input.id = this._fieldId(`external-${key}-${cfg.id}`);
+        input.placeholder = placeholder;
+        input.spellcheck = key === 'name' || key === 'jobTitle';
+        input.style.cssText = 'width:100%;box-sizing:border-box;padding:4px 6px;border:1px solid #c8c6c4;border-radius:2px;font-size:13px;';
+        const label = document.createElement('label');
+        label.htmlFor = input.id;
+        label.textContent = labelText;
+        label.style.cssText = 'display:block;font-size:11px;color:#605e5c;margin-bottom:2px;';
+        wrap.appendChild(label);
+        wrap.appendChild(input);
+        body.appendChild(wrap);
+        return input;
+      };
+
+      const makeMessage = (id: string, color: string, role: string): HTMLDivElement => {
+        const d = document.createElement('div');
+        d.id = id;
+        d.setAttribute('role', role);
+        d.style.cssText = `font-size:11px;color:${color};margin-top:-4px;display:none;`;
+        return d;
+      };
+
+      const nameInput = makeInput('name', strings.PropertyPane_ExternalPeople_NameLabel, strings.PropertyPane_ExternalPeople_NamePlaceholder);
+      const titleInput = makeInput('jobTitle', strings.PropertyPane_ExternalPeople_TitleLabel, strings.PropertyPane_ExternalPeople_TitlePlaceholder);
+      const emailInput = makeInput('email', strings.PropertyPane_ExternalPeople_EmailLabel, strings.PropertyPane_ExternalPeople_EmailPlaceholder);
+      const emailError = makeMessage(this._fieldId(`external-emailError-${cfg.id}`), '#a4262c', 'alert');
+      emailInput.setAttribute('aria-describedby', emailError.id);
+      body.appendChild(emailError);
+      const managerInput = makeInput('managerEmail', strings.PropertyPane_ExternalPeople_ManagerLabel, strings.PropertyPane_ExternalPeople_ManagerPlaceholder);
+      const managerError = makeMessage(this._fieldId(`external-managerError-${cfg.id}`), '#a4262c', 'alert');
+      const warning = makeMessage(this._fieldId(`external-managerWarning-${cfg.id}`), '#8a5a00', 'status');
+      managerInput.setAttribute('aria-describedby', `${managerError.id} ${warning.id}`);
+      body.appendChild(managerError);
+      body.appendChild(warning);
+
+      const refs: IRowRefs = {
+        row, body, toggle, chevron, nameText, flag,
+        inputs: { name: nameInput, jobTitle: titleInput, email: emailInput, managerEmail: managerInput },
+        errors: { email: emailError, managerEmail: managerError },
+        warning,
+      };
+      setName(refs, cfg.name || '');
+      setExpanded(refs, false);
+
+      toggle.addEventListener('click', () => setExpanded(refs, toggle.getAttribute('aria-expanded') !== 'true'));
+      nameInput.addEventListener('input', () => setName(refs, nameInput.value));
+
+      TEXT_KEYS.forEach(key => {
+        const input = refs.inputs[key];
+        const commitChange = (): void => {
+          const value = key === 'name' || key === 'jobTitle' ? input.value : input.value.trim();
+          if (key === 'email' || key === 'managerEmail') showValidity(refs, key, value);
+          const list = getList();
+          const idx = findIndex(list, cfg.id);
+          if (idx < 0 || (list[idx][key] || '') === value) return;
+          list[idx] = { ...list[idx], [key]: value };
+          commit(list);
+        };
+        input.addEventListener('change', commitChange);
+        input.addEventListener('blur', commitChange);
+      });
+
+      removeBtn.addEventListener('click', () => {
+        const list = getList().filter(c => c.id !== cfg.id);
+        rowRefs.delete(cfg.id);
+        row.remove();
+        commit(list);
+        updateEmptyState();
+      });
+
+      return refs;
+    };
+
+    getList().forEach((cfg, idx) => {
+      const refs = buildRow(cfg, idx);
+      rowRefs.set(cfg.id, refs);
+      rowsContainer.appendChild(refs.row);
+      applyRowValues(refs, cfg);
+      // People who are already entered stay collapsed; a row with no name yet is still being filled in
+      setExpanded(refs, !(cfg.name || '').trim());
+    });
+    updateEmptyState();
+
+    addBtn.addEventListener('click', () => {
+      const newCfg: IExternalPersonConfig = {
+        id: 'ext-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
+        name: '',
+        jobTitle: '',
+        email: '',
+        managerEmail: '',
+      };
+      const newList = [...getList(), newCfg];
+      const refs = buildRow(newCfg, newList.length - 1);
+      rowRefs.set(newCfg.id, refs);
+      rowsContainer.appendChild(refs.row);
+      applyRowValues(refs, newCfg);
+      setExpanded(refs, true);
+      updateEmptyState();
+      commit(newList);
+      refs.inputs.name.focus();
+    });
+
+    this._customFields.set(elem, handle);
+  }
+
   protected get dataVersion(): Version {
     return Version.parse('1.0');
   }
@@ -898,6 +1321,41 @@ export default class SmartOrgChartWebPart extends BaseClientSideWebPart<ISmartOr
               ]
             },
             {
+              groupName: strings.PropertyPane_Group_ExternalPeople,
+              groupFields: [
+                PropertyPaneLabel('externalPeople', {
+                  text: strings.PropertyPane_ExternalPeople_Note
+                }),
+                ({
+                  type: PropertyPaneFieldType.Custom,
+                  targetProperty: 'externalPeopleCsvUrl',
+                  properties: {
+                    key: 'externalPeopleCsvField',
+                    onRender: (elem: HTMLElement, _ctx: any, changeCallback: ChangeCallback) => {
+                      this._renderExternalCsvField(elem, changeCallback);
+                    },
+                    onDispose: (elem: HTMLElement) => { this._disposeCustomField(elem); }
+                  }
+                } as IPropertyPaneField<IPropertyPaneCustomFieldProps>),
+                ({
+                  type: PropertyPaneFieldType.Custom,
+                  targetProperty: 'externalPeople',
+                  properties: {
+                    key: 'externalPeopleField',
+                    onRender: (elem: HTMLElement, _ctx: any, changeCallback: ChangeCallback) => {
+                      this._renderExternalPeopleField(elem, changeCallback);
+                    },
+                    onDispose: (elem: HTMLElement) => { this._disposeCustomField(elem); }
+                  }
+                } as IPropertyPaneField<IPropertyPaneCustomFieldProps>),
+                PropertyPaneToggle('showExternalBadge', {
+                  label: strings.PropertyPane_ExternalPeople_ShowBadge_Label,
+                  onText: strings.PropertyPane_Visible,
+                  offText: strings.PropertyPane_Hidden
+                })
+              ]
+            },
+            {
               groupName: strings.PropertyPane_Group_UserFilters,
               groupFields: [
                 PropertyPaneTextField('excludedAccounts', {
@@ -958,18 +1416,17 @@ export default class SmartOrgChartWebPart extends BaseClientSideWebPart<ISmartOr
                   placeholder: strings.PropertyPane_DottedLine_Placeholder,
                   description: strings.PropertyPane_DottedLine_Description
                 }),
-                PropertyPaneDropdown('defaultZoom', {
-                  label: strings.PropertyPane_DefaultZoom_Label,
-                  options: [
-                    { key: 0,    text: strings.PropertyPane_Zoom_Auto },
-                    { key: 0.5,  text: strings.PropertyPane_Zoom_50 },
-                    { key: 0.75, text: strings.PropertyPane_Zoom_75 },
-                    { key: 1,    text: strings.PropertyPane_Zoom_100 },
-                    { key: 1.25, text: strings.PropertyPane_Zoom_125 },
-                    { key: 1.5,  text: strings.PropertyPane_Zoom_150 },
-                  ],
-                  selectedKey: this.properties.defaultZoom ?? 0,
-                })
+                ({
+                  type: PropertyPaneFieldType.Custom,
+                  targetProperty: 'defaultZoom',
+                  properties: {
+                    key: 'defaultZoomField',
+                    onRender: (elem: HTMLElement, _ctx: any, callback: ChangeCallback) => {
+                      this._renderZoomField(elem, callback);
+                    },
+                    onDispose: (elem: HTMLElement) => { this._disposeCustomField(elem); }
+                  }
+                } as IPropertyPaneField<IPropertyPaneCustomFieldProps>)
               ]
             },
             {

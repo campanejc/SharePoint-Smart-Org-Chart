@@ -4,6 +4,21 @@ All notable changes to Smart Org Chart are documented here.
 
 ---
 
+## [1.5.0] — 2026-10-21
+
+### Added
+- **External People** — show people who are not in the Microsoft 365 directory (contractors, partners, open positions) on the org chart. Add them from a **CSV file** saved in a document library on the site (columns `Name`, `JobTitle`, `Email`, `ManagerEmail` — comma, semicolon, or tab separated; save from Excel as CSV UTF-8), with an inline **+ Add person** editor in the property pane, or both. Saved people collapse to just their name in the pane, so a long list stays compact. Each person is placed under whoever has their manager email — a directory user, or another external person by their email — so contractor teams can have their own structure. They also appear in the Employee Directory, search, headcounts, and exports with an optional **External** badge (**Show "External" badge**, on by default). The property pane shows how many people were read from the file, any missing columns, and a warning for anyone whose manager email matches no one. External people have no photo, presence, or Chat/Email actions.
+- **Fit entire chart** button and an editable zoom percentage in the org chart toolbar.
+
+### Changed
+- **Map-like org chart navigation** — the Top Down and Left to Right layouts now sit on a map-style canvas instead of a scrolling container. The previous scroll-and-zoom view couldn't cope with wide org charts: zoom stopped at 25%, so a wide tree never fit on screen, panning meant hunting with scrollbars, and every zoom step re-rendered every card. Now you can zoom anywhere from 1% to 150%, zoom with the mouse wheel around the pointer, and drag to pan in any direction; expanding a branch keeps your current view, and each tree layout remembers where you left it — switching views or reloading the page puts you back at the same spot and zoom (a view you never moved opens as described next). A small organization opens fitted to the web part; a large one opens at a readable 60% looking at the root — top-center in Top Down, top-left in Left to Right — instead of shrinking to an unreadable 1% overview, and **Fit entire chart** is one click away. On touch devices, tap **Explore chart** to pan with one finger and pinch to zoom, then **Done** (or Escape) to return to normal page scrolling.
+- **Default Org Chart Zoom** now accepts Auto-fit or any whole percentage from 1% to 100% instead of a fixed list; existing settings are preserved.
+
+### Fixed
+- **Property pane unusable while a person's profile card was open** — when editing the page, opening a profile card in the org chart made the web part's property pane impossible to use (focus was pulled back into the card every time you clicked into a pane field). The card no longer holds on to focus, and clicking anywhere outside it — including the property pane — closes it.
+
+---
+
 ## [1.4.1] — 2026-10-05
 
 ### Added

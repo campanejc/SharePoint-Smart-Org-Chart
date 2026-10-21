@@ -1,5 +1,5 @@
 # Smart Org Chart — User Guide
-**Version 1.4.1**
+**Version 1.5.0**
 
 Smart Org Chart is a SharePoint web part that gives your organization two complementary views of its people data: a searchable **Employee Directory** and an interactive **Org Chart**, both powered by Microsoft Graph.
 
@@ -19,6 +19,7 @@ Smart Org Chart is a SharePoint web part that gives your organization two comple
 7. [Exporting](#7-exporting)
 8. [Admin Configuration](#8-admin-configuration)
    - [Custom Attributes](#custom-attributes)
+   - [External People](#external-people)
 9. [Themes](#9-themes)
 10. [Languages](#10-languages)
 11. [Tips](#11-tips)
@@ -134,9 +135,13 @@ The vertical and horizontal tree layouts display the full loaded hierarchy simul
 - Click the **chevron button** at the bottom of a card to expand or collapse that branch.
 - Use **Expand All** / **Collapse All** in the toolbar to expand or collapse every node at once. **Expand All** fetches the complete organization, loading any levels that have not yet been retrieved from Microsoft Graph.
 
-**Panning:** Click and drag anywhere on the chart canvas to scroll.
+**Panning:** Click and drag anywhere on the chart to move around in any direction — the chart behaves like a map and stays inside its frame, with no scrollbars.
 
-**Zooming:** Use the **+** / **−** buttons in the toolbar (bottom-right) or the reset button to return to the default zoom level (100%, or whatever fixed zoom your admin has configured).
+**Opening view:** a small organization opens fitted to the web part. A large one opens at a readable zoom (60%) looking at the top of the chart — the root card at the top-center of Top Down, or the top-left of Left to Right — instead of shrinking everything to an unreadable overview. Click **Fit entire chart** whenever you want the whole picture.
+
+**Zooming:** Turn the mouse wheel to zoom in or out around the pointer, use the **+** / **−** buttons in the toolbar, or type a percentage (1–150) into the zoom box. **Fit entire chart** shows the whole organization at once, and the reset button returns to the default zoom (Auto-fit, or whatever fixed zoom your admin has configured). Expanding a branch keeps your current view, and the chart remembers where you left it: when you come back to a tree layout or reload the page, it opens at the same position and zoom (re-centering on a different person, or using the reset button, starts fresh).
+
+**On a phone or tablet:** the chart starts inactive so it never blocks scrolling the page. Tap **Explore chart** to pan with one finger and pinch to zoom, then tap **Done** (or press Escape) to go back to normal scrolling.
 
 **Keyboard navigation:** Click a card to give it keyboard focus, then use **Arrow Up/Down/Left/Right** to move between cards and **Home**/**End** to jump to the first or last card at that level. Each card also shows the total headcount below that person, in addition to their direct-report count.
 
@@ -158,7 +163,7 @@ The toolbar appears above the chart and contains the following controls (some ma
 | **User type filter** (funnel icon) | Toggles visibility of Regular members and Guest users. |
 | **Export PDF** (PDF icon) | Downloads the currently visible org chart as a PDF. |
 | **Export CSV** (Excel icon) | Downloads the currently visible org chart as a CSV spreadsheet. |
-| **Zoom controls** | Visible in tree modes only. Adjust the scale from 25% to 150%. |
+| **Zoom controls** | Visible in tree modes only. Zoom from 1% to 150% with **+** / **−**, by typing a percentage, or with **Fit entire chart** / reset. |
 
 #### Stats bar
 
@@ -183,7 +188,7 @@ The profile card shows:
 - **Direct and total reports** — e.g. "8 direct reports · 33 total" — shown when the person manages anyone
 - **Email, phone numbers, and office location**
 - **Custom Attributes** — any Entra ID fields your admin has configured to show here (see [Custom Attributes](#custom-attributes)), such as Employee ID or Cost Center
-- **Disabled / Guest badges** where applicable
+- **Disabled / Guest / External badges** where applicable
 - **Reports to** — the person's manager chain up to 8 levels, shown as clickable chips. Click any chip to jump to that manager.
 - **Dotted line** — if your admin has configured a dotted-line manager attribute, this person's secondary/dotted-line manager and any dotted-line reports appear here as clickable chips (↑ for their dotted-line manager, ↓ for dotted-line reports)
 - **Action buttons:** Chat in Teams, Email, and Focus (re-centers the org chart on this person)
@@ -315,6 +320,27 @@ For each attribute (up to 10), configure:
 
 Use **+ Add attribute** to add a row and the **×** button to remove one. A value is only shown for a person if that field actually has data in Azure AD — empty values are hidden rather than shown blank.
 
+### External People
+
+Show people who are not in your Microsoft 365 directory — contractors, partners, or open positions — on the org chart. In the **External People** group, add them from a CSV file, with the inline editor, or both. They appear in the org chart, the Employee Directory, search, headcounts, and exports. By default each one carries an **External** badge (turn it off with **Show "External" badge**). External people have no photo, presence, or Chat/Email actions.
+
+**From a CSV file** — save a `.csv` file in a document library on the same site collection as the page, and paste its link into **People CSV file**. The first row must be a header row (not case-sensitive):
+
+| Column | Required | Description |
+|---|---|---|
+| `Name` | Yes | The person's name. Rows with no name are skipped. (Also accepted: `Title`, `Full Name`, `Display Name`.) |
+| `JobTitle` | No | Their job title. (Also: `Job Title`, `Position`, `Role`.) |
+| `Email` | No | Their own email. Lets other external people report to them. (Also: `Mail`, `Email Address`.) |
+| `ManagerEmail` | Yes | Email or UPN of the person they report to. (Also: `Manager Email`, `Manager`, `Reports To`.) |
+
+In Excel, save with **File → Save As → CSV UTF-8**. Comma-, semicolon-, and tab-separated files all work, and older "CSV" files with accented characters are read correctly. Up to 5,000 rows are read. The pane shows how many people were read and lists any missing columns or the link problem. Everyone who views the page needs permission to open the file. After you edit it, click **Refresh data** in the [header bar](#2-header-bar) (or reload the page) to see the change.
+
+**With the inline editor** — click **+ Add person** and enter a name, job title, an optional email, and the email of the person they report to. Once someone is entered, their row collapses to just their name; click it to open the fields again. A ⚠ next to a name means the row needs attention — an invalid email, or a manager email that matches no one. Use **×** to remove someone. Changes apply immediately.
+
+**With Use Demo Data on** — the CSV file is still read, but the people in the chart are the demo people, so the `ManagerEmail` values must match demo emails (for example `a.chen@contoso.com`) for anyone to be placed.
+
+**Who they report to** — each person is placed under whoever has the manager email: a directory user, or another external person (matched by that person's **Email**). If the manager is hidden by a [User Filter](#user-filters), the person moves up to the next visible manager. If no one has that email, the pane shows a warning; the person still appears in the Directory but is not placed in the chart until you fix the email.
+
 ### User Filters
 
 These filters are applied globally — hidden users do not appear in the directory, the org chart, stats, or search results.
@@ -339,7 +365,7 @@ These filters are applied globally — hidden users do not appear in the directo
 | **Top-Level User** | UPN or email of the person at the root of the org chart (e.g. `ceo@company.com`). Required. |
 | **Levels to load below root** | How many hierarchy levels to fetch on initial load (1–8). Higher values load more data upfront; lower values are faster but require more click-through to explore deep branches. |
 | **Dotted-line manager attribute** | Optional. The name of an on-premises AD extension attribute (`extensionAttribute1` through `extensionAttribute15`) that holds a secondary "dotted line" manager's email or UPN. When set, that secondary reporting relationship appears in the [Person Profile Card](#5-person-profile-card). Requires the Graph API data source. |
-| **Default Org Chart Zoom** | Starting zoom level for the org chart: Auto-fit (default), 50%, 75%, 100%, 125%, or 150%. When set to a fixed value, the chart opens at that zoom rather than fitting to the visible area. |
+| **Default Org Chart Zoom** | Starting zoom level for the org chart: Auto-fit (default), or any whole percentage from 1% to 100%. When set to a fixed value, the chart opens at that zoom rather than fitting to the visible area. |
 
 ### Org Chart Features
 

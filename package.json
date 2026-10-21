@@ -1,6 +1,6 @@
 {
   "name": "sharepoint-smart-org-chart",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "private": true,
   "engines": {
     "node": ">=18.17.1 <19.0.0"
@@ -13,7 +13,11 @@
     "package": "gulp bundle --ship && gulp package-solution --ship",
     "ship": "npm run clean && npm run package",
     "serve": "gulp serve",
-    "demo:screenshots": "node demo/take-screenshots.js"
+    "demo:screenshots": "node demo/take-screenshots.js",
+    "test:navigation": "webpack --config demo/webpack.demo.config.js && node tests/tree-navigation.cjs",
+    "test:external-csv": "node tests/external-people-csv.cjs",
+    "test:external-people": "webpack --config demo/webpack.demo.config.js && node tests/external-people.cjs",
+    "test": "npm run test:external-csv && npm run test:external-people && npm run test:navigation"
   },
   "dependencies": {
     "@fluentui/react": "8.110.2",
