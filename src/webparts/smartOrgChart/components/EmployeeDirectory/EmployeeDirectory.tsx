@@ -721,16 +721,6 @@ export class EmployeeDirectory extends React.Component<IEmployeeDirectoryProps, 
             </button>
           )}
 
-          <button
-            className={styles.exportExcelBtn}
-            onClick={() => this.exportExcel()}
-            disabled={filtered.length === 0}
-            title={strings.Directory_ExportCsvTitle}
-          >
-            <Icon iconName="Download" aria-hidden="true" />
-            <span>{strings.Directory_ExportCsvButton}</span>
-          </button>
-
           <div className={styles.viewToggle} role="group" aria-label={strings.Directory_ViewModeAria}>
             <button
               className={`${styles.viewBtn} ${viewMode === 'card' ? styles.viewBtnActive : ''}`}
