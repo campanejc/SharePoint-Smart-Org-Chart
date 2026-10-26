@@ -334,14 +334,6 @@ export const OrgChartToolbar: React.FC<IOrgChartToolbarProps> = (p) => {
         </div>
       )}
 
-      {/* Export PDF / CSV */}
-      <button className={styles.iconToolBtn} onClick={p.onExportPdf} title={strings.Chart_DownloadPdfTitle} aria-label={strings.Chart_DownloadPdfTitle}>
-        <Icon iconName="PDF" />
-      </button>
-      <button className={styles.iconToolBtn} onClick={p.onExportCsv} title={strings.Chart_DownloadCsvTitle} aria-label={strings.Chart_DownloadCsvTitle}>
-        <Icon iconName="ExcelDocument" />
-      </button>
-
       {/* Root picker — "View from person…" */}
       <div className={styles.rootPickerWrapper} ref={p.rootPickerRef}>
         {p.runtimeRootUser ? (
